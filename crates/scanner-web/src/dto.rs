@@ -6,7 +6,7 @@ use std::time::SystemTime;
 use scanner_core::destination::{Delivery, DestinationInfo};
 use scanner_core::output::{Format, StoredFile};
 use scanner_core::scanner::{Capabilities, ColorMode, FoundDevice, ScanSettings, Source};
-use scanner_core::service::{DeviceList, Job, ScanRequest};
+use scanner_core::service::{DeviceList, Job, PendingUpload, ScanRequest};
 use serde::{Deserialize, Serialize};
 
 use crate::error::ApiError;
@@ -106,6 +106,37 @@ impl From<Delivery> for DeliveryDto {
             message,
         }
     }
+}
+
+#[derive(Serialize)]
+pub struct PendingUploadDto {
+    pub destination: String,
+    pub file: String,
+    pub attempts: u32,
+    pub last_error: String,
+    pub next_attempt: String,
+    pub delete_after_upload: bool,
+}
+
+impl From<PendingUpload> for PendingUploadDto {
+    fn from(p: PendingUpload) -> Self {
+        let at = std::time::UNIX_EPOCH + std::time::Duration::from_secs(p.next_attempt);
+        Self {
+            destination: p.destination,
+            file: p.file,
+            attempts: p.attempts,
+            last_error: p.last_error,
+            next_attempt: timestamp(at),
+            delete_after_upload: p.delete_after,
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub struct PendingUploads {
+    pub items: Vec<PendingUploadDto>,
+    /// Problem saving the retry list, if any.
+    pub error: Option<String>,
 }
 
 #[derive(Deserialize)]

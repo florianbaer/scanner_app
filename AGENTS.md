@@ -70,6 +70,11 @@ removes a local file only if *every* selected destination accepted it
 (`destination::deliver_files`, shared by worker and CLI). Secrets stay server-side:
 the API exposes only destination ids, labels and kinds.
 
+Retries: failed uploads (any destination) go to the outbox
+(`service/outbox.rs`, persisted as `.pending-uploads.json` in the scans folder, so
+retries survive restarts). A timer asks the worker to retry due entries (default
+hourly); delete-after-upload waits until no upload for that file is pending.
+
 Scan service: one worker thread owns the `Backend`; scans, discovery and capability
 queries are commands on an mpsc channel, so device access is serialised. Job state
 lives in the shared `JobStore`, which front-ends read without waiting on the worker.

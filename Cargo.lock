@@ -1270,6 +1270,8 @@ dependencies = [
  "anyhow",
  "chrono",
  "image",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

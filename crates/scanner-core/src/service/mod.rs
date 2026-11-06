@@ -9,9 +9,11 @@
 //!
 //! A single worker thread owns the [`Backend`], so device access is serialised.
 //! Job state lives in a shared [`JobStore`] that front-ends can read without
-//! waiting for the worker.
+//! waiting for the worker. Failed uploads go to a persisted outbox that the
+//! worker retries on a timer (any destination, survives restarts).
 
 mod jobs;
+mod outbox;
 mod worker;
 
 use std::collections::HashMap;
@@ -25,11 +27,13 @@ use std::time::Duration;
 use anyhow::{anyhow, Result};
 
 pub use jobs::{Job, JobId, JobState, ScanRequest};
+pub use outbox::{PendingUpload, OUTBOX_FILE};
 
 use crate::destination::{self, DestinationInfo, SharedDestination};
 use crate::output::{self, StoredFile};
 use crate::scanner::{Backend, Capabilities, FoundDevice};
 use jobs::JobStore;
+use outbox::Outbox;
 use worker::{Command, Worker};
 
 /// Expected service conditions a front-end may map to specific responses.
@@ -60,6 +64,35 @@ pub(crate) struct Shared {
     pub devices: Mutex<Vec<FoundDevice>>,
     pub capabilities: Mutex<HashMap<String, Capabilities>>,
     pub destinations: Vec<SharedDestination>,
+    pub outbox: Mutex<Outbox>,
+    /// Last error persisting the outbox, if any (shown to users).
+    pub outbox_error: Mutex<Option<String>>,
+    pub retry_interval: Duration,
+}
+
+/// How the service is set up. Front-ends build this from their own config.
+#[derive(Clone)]
+pub struct ServiceConfig {
+    /// Where scan files (and the pending-upload list) are written.
+    pub output_dir: PathBuf,
+    /// Targets scans may additionally be sent to.
+    pub destinations: Vec<SharedDestination>,
+    /// Wait between attempts for a failed upload.
+    pub retry_interval: Duration,
+    /// How often to look for uploads that are due.
+    pub retry_check: Duration,
+}
+
+impl ServiceConfig {
+    /// Defaults: no destinations, retry failed uploads every hour.
+    pub fn new(output_dir: PathBuf) -> Self {
+        Self {
+            output_dir,
+            destinations: Vec::new(),
+            retry_interval: Duration::from_secs(60 * 60),
+            retry_check: Duration::from_secs(60),
+        }
+    }
 }
 
 /// Result of a discovery request.
@@ -77,20 +110,20 @@ pub struct ScannerService {
 }
 
 impl ScannerService {
-    /// Starts the worker thread. Output files are written to `output_dir`;
-    /// `destinations` are the targets scans may additionally be sent to.
-    pub fn start(
-        backend: impl Backend,
-        output_dir: PathBuf,
-        destinations: Vec<SharedDestination>,
-    ) -> Result<Self> {
+    /// Starts the worker thread and the retry timer. Fails if the persisted
+    /// pending-upload list can't be read.
+    pub fn start(backend: impl Backend, config: ServiceConfig) -> Result<Self> {
+        let outbox = Outbox::load(&config.output_dir)?;
         let shared = Arc::new(Shared {
             jobs: JobStore::default(),
-            output_dir,
+            output_dir: config.output_dir,
             scanning: AtomicBool::new(false),
             devices: Mutex::new(Vec::new()),
             capabilities: Mutex::new(HashMap::new()),
-            destinations,
+            destinations: config.destinations,
+            outbox: Mutex::new(outbox),
+            outbox_error: Mutex::new(None),
+            retry_interval: config.retry_interval,
         });
         let (tx, rx) = mpsc::channel();
         let worker = Worker {
@@ -100,6 +133,21 @@ impl ScannerService {
         std::thread::Builder::new()
             .name("scanner-worker".into())
             .spawn(move || worker.run(rx))?;
+
+        // Retry timer: asks the worker to process due uploads, in order with scans.
+        let ticker = tx.clone();
+        let every = config.retry_check;
+        std::thread::Builder::new()
+            .name("scanner-retry-timer".into())
+            .spawn(move || loop {
+                std::thread::sleep(every);
+                if ticker.send(Command::RetryDue).is_err() {
+                    break;
+                }
+            })?;
+        // Pick up anything left over from before a restart right away.
+        let _ = tx.send(Command::RetryDue);
+
         Ok(Self { tx, shared })
     }
 
@@ -175,6 +223,24 @@ impl ScannerService {
     /// Configured destinations (ids and labels only, no secrets).
     pub fn destinations(&self) -> Vec<DestinationInfo> {
         self.shared.destinations.iter().map(|d| d.info()).collect()
+    }
+
+    /// Uploads waiting for a retry, oldest first.
+    pub fn pending_uploads(&self) -> Vec<PendingUpload> {
+        lock(&self.shared.outbox).items().to_vec()
+    }
+
+    /// Problem persisting the pending-upload list, if any.
+    pub fn pending_uploads_error(&self) -> Option<String> {
+        lock(&self.shared.outbox_error).clone()
+    }
+
+    /// Retries all pending uploads now instead of waiting for their next slot.
+    pub fn retry_uploads_now(&self) -> Result<()> {
+        lock(&self.shared.outbox).make_all_due(outbox::now_secs())?;
+        self.tx
+            .send(Command::RetryDue)
+            .map_err(|_| anyhow!("scan worker has stopped"))
     }
 
     /// All recent jobs, newest first.

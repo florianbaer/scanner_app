@@ -31,6 +31,8 @@ pub fn router(service: AppState) -> Router {
         .route("/api/jobs", get(list_jobs).post(create_job))
         .route("/api/jobs/{id}", get(get_job))
         .route("/api/jobs/{id}/cancel", post(cancel_job))
+        .route("/api/uploads/pending", get(pending_uploads))
+        .route("/api/uploads/retry", post(retry_uploads))
         .route("/api/files", get(list_files))
         .route("/files/{name}", get(download))
         .with_state(service)
@@ -106,6 +108,20 @@ async fn cancel_job(State(svc): State<AppState>, Path(id): Path<u64>) -> ApiResu
     } else {
         Err(ApiError::bad_request("job is not running or queued"))
     }
+}
+
+// --- pending uploads (retries) ---------------------------------------------
+
+async fn pending_uploads(State(svc): State<AppState>) -> Json<dto::PendingUploads> {
+    Json(dto::PendingUploads {
+        items: svc.pending_uploads().into_iter().map(Into::into).collect(),
+        error: svc.pending_uploads_error(),
+    })
+}
+
+async fn retry_uploads(State(svc): State<AppState>) -> ApiResult<StatusCode> {
+    svc.retry_uploads_now()?;
+    Ok(StatusCode::ACCEPTED)
 }
 
 // --- files -------------------------------------------------------------------

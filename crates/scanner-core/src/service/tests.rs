@@ -1,6 +1,7 @@
 //! Service tests against a fake backend: no hardware needed.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use image::{DynamicImage, RgbImage};
@@ -98,7 +99,67 @@ fn service_with(
         pages,
         page_delay: Duration::from_millis(delay_ms),
     };
-    ScannerService::start(backend, dir.0.clone(), destinations).unwrap()
+    let mut config = ServiceConfig::new(dir.0.clone());
+    config.destinations = destinations;
+    ScannerService::start(backend, config).unwrap()
+}
+
+/// Service whose retries happen almost immediately, for retry tests.
+fn fast_retry_service(dir: &TempDir, destinations: Vec<SharedDestination>) -> ScannerService {
+    let backend = FakeBackend {
+        pages: 1,
+        page_delay: Duration::ZERO,
+    };
+    let mut config = ServiceConfig::new(dir.0.clone());
+    config.destinations = destinations;
+    config.retry_interval = Duration::ZERO;
+    config.retry_check = Duration::from_millis(20);
+    ScannerService::start(backend, config).unwrap()
+}
+
+/// Fails the first `failures` uploads, then succeeds.
+struct Flaky {
+    failures: std::sync::atomic::AtomicUsize,
+    delivered: std::sync::atomic::AtomicUsize,
+}
+
+impl Flaky {
+    fn new(failures: usize) -> Arc<Self> {
+        Arc::new(Self {
+            failures: failures.into(),
+            delivered: 0.into(),
+        })
+    }
+}
+
+impl crate::destination::Destination for Flaky {
+    fn info(&self) -> crate::destination::DestinationInfo {
+        crate::destination::DestinationInfo {
+            id: "flaky".into(),
+            label: "Flaky".into(),
+            kind: "test",
+        }
+    }
+    fn deliver(&self, _: &std::path::Path) -> Result<String> {
+        use std::sync::atomic::Ordering::SeqCst;
+        if self
+            .failures
+            .fetch_update(SeqCst, SeqCst, |n| n.checked_sub(1))
+            .is_ok()
+        {
+            anyhow::bail!("temporarily unavailable");
+        }
+        self.delivered.fetch_add(1, SeqCst);
+        Ok("ok".into())
+    }
+}
+
+fn wait_until(what: &str, mut cond: impl FnMut() -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !cond() {
+        assert!(Instant::now() < deadline, "timed out waiting for {what}");
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 fn request() -> ScanRequest {
@@ -298,4 +359,76 @@ fn delete_without_destination_is_rejected() {
     let mut req = request();
     req.delete_after_delivery = true;
     assert!(svc.submit(req).is_err());
+}
+
+#[test]
+fn failed_upload_is_retried_until_it_succeeds_then_local_copy_deleted() {
+    let dir = TempDir::new("retry");
+    let flaky = Flaky::new(2);
+    let svc = fast_retry_service(&dir, vec![flaky.clone()]);
+    let mut req = request();
+    req.destinations = vec!["flaky".into()];
+    req.delete_after_delivery = true;
+    let job = wait_finished(&svc, svc.submit(req).unwrap());
+
+    // First attempt failed: local copy kept and queued for retry.
+    assert_eq!(job.state, JobState::Done);
+    assert!(job.deliveries[0].result.is_err());
+    assert!(job.deleted_files.is_empty());
+
+    wait_until("retries to succeed", || svc.pending_uploads().is_empty());
+    assert_eq!(flaky.delivered.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert!(
+        svc.file_path(&job.files[0]).is_none(),
+        "deleted after the retry succeeded"
+    );
+    assert!(!dir.0.join(OUTBOX_FILE).exists());
+}
+
+#[test]
+fn pending_uploads_survive_a_restart() {
+    let dir = TempDir::new("restart");
+    let file;
+    {
+        // Hourly retries: nothing is retried during this test.
+        let svc = service_with(1, 0, &dir, vec![Flaky::new(usize::MAX)]);
+        let mut req = request();
+        req.destinations = vec!["flaky".into()];
+        let job = wait_finished(&svc, svc.submit(req).unwrap());
+        file = job.files[0].clone();
+        let pending = svc.pending_uploads();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].file, file);
+        assert_eq!(pending[0].last_error, "temporarily unavailable");
+        assert!(pending[0].next_attempt >= pending[0].created + 3600);
+    }
+    assert!(dir.0.join(OUTBOX_FILE).exists());
+
+    // "Restart" with a working destination: the leftover upload is sent at startup.
+    let ok = Flaky::new(0);
+    let svc = service_with(1, 0, &dir, vec![ok.clone()]);
+    svc.retry_uploads_now().unwrap();
+    wait_until("upload after restart", || svc.pending_uploads().is_empty());
+    assert_eq!(ok.delivered.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert!(svc.file_path(&file).is_some(), "kept: delete-after was off");
+}
+
+#[test]
+fn retry_now_and_attempt_counting() {
+    let dir = TempDir::new("retry_now");
+    let svc = service_with(1, 0, &dir, vec![Flaky::new(2)]);
+    let mut req = request();
+    req.destinations = vec!["flaky".into()];
+    wait_finished(&svc, svc.submit(req).unwrap());
+    assert_eq!(svc.pending_uploads()[0].attempts, 1);
+
+    svc.retry_uploads_now().unwrap(); // fails again (2nd failure)
+    wait_until("second attempt", || {
+        svc.pending_uploads()
+            .first()
+            .is_some_and(|p| p.attempts == 2)
+    });
+    svc.retry_uploads_now().unwrap(); // succeeds
+    wait_until("success", || svc.pending_uploads().is_empty());
+    assert!(svc.pending_uploads_error().is_none());
 }

@@ -8,10 +8,11 @@ mod routes;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use scanner_core::service::ScannerService;
+use scanner_core::service::{ScannerService, ServiceConfig};
 use scanner_sane::SaneBackend;
 
 #[derive(Parser)]
@@ -35,6 +36,10 @@ struct Args {
     /// Destinations config (TOML). Defaults to ./scanner.toml if it exists.
     #[arg(short, long, env = "SCANNER_CONFIG")]
     config: Option<PathBuf>,
+
+    /// Minutes between retries of a failed upload.
+    #[arg(long, env = "SCANNER_RETRY_MINUTES", default_value_t = 60, value_parser = clap::value_parser!(u64).range(1..))]
+    retry_minutes: u64,
 }
 
 #[tokio::main]
@@ -47,11 +52,14 @@ async fn main() -> Result<()> {
         let info = d.info();
         eprintln!("Destination: {} ({}, {})", info.label, info.id, info.kind);
     }
-    let service = Arc::new(ScannerService::start(
-        backend,
-        args.out.clone(),
-        destinations,
-    )?);
+    let mut config = ServiceConfig::new(args.out.clone());
+    config.destinations = destinations;
+    config.retry_interval = Duration::from_secs(args.retry_minutes * 60);
+    let service = Arc::new(ScannerService::start(backend, config)?);
+    let pending = service.pending_uploads().len();
+    if pending > 0 {
+        eprintln!("{pending} upload(s) pending from before; retrying now");
+    }
 
     let addr = SocketAddr::new(args.host, args.port);
     let listener = tokio::net::TcpListener::bind(addr)

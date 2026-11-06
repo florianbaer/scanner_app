@@ -10,6 +10,7 @@ const state = {
   capabilities: null,
   jobs: [],
   pollTimer: null,
+  pendingCount: 0,
   lastFinishedIds: new Set(),
 };
 
@@ -249,6 +250,7 @@ async function refreshJobs() {
   const newlyFinished = [...finished].some((id) => !state.lastFinishedIds.has(id));
   state.lastFinishedIds = finished;
   if (newlyFinished) refreshFiles();
+  refreshPending();
 
   schedulePoll();
 }
@@ -288,8 +290,9 @@ function renderJobs() {
     }
     for (const d of job.deliveries) {
       const name = d.destination ? destinationLabel(d.destination) : "This computer";
+      const retry = !d.ok && d.destination ? " · will retry automatically" : "";
       info.append(
-        el("div", d.ok ? "delivery ok" : "delivery failed", `${d.ok ? "✓" : "✗"} ${name}: ${d.message}`),
+        el("div", d.ok ? "delivery ok" : "delivery failed", `${d.ok ? "✓" : "✗"} ${name}: ${d.message}${retry}`),
       );
     }
     li.append(info);
@@ -303,6 +306,48 @@ function renderJobs() {
       li.append(el("span", `badge ${job.state}`, job.state));
     }
     list.append(li);
+  }
+}
+
+// --- pending uploads -------------------------------------------------------
+
+async function refreshPending() {
+  let data;
+  try {
+    data = await api("/api/uploads/pending");
+  } catch {
+    return;
+  }
+  const count = data.items.length;
+  // Retries may have deleted local copies or finished uploads: keep files in sync.
+  if (count !== state.pendingCount) refreshFiles();
+  state.pendingCount = count;
+
+  $("pending-section").hidden = count === 0 && !data.error;
+  $("pending-error").textContent = data.error ? `Couldn't save the retry list: ${data.error}` : "";
+  const list = $("pending");
+  list.innerHTML = "";
+  for (const p of data.items) {
+    const li = document.createElement("li");
+    const info = el("div", "grow");
+    info.append(el("div", "title", `${p.file} → ${destinationLabel(p.destination)}`));
+    const tries = `${p.attempts} attempt${p.attempts === 1 ? "" : "s"}`;
+    info.append(el("div", "meta", `${tries} · next try ${time(p.next_attempt)}`));
+    info.append(el("div", "job-error", p.last_error));
+    li.append(info);
+    list.append(li);
+  }
+}
+
+async function retryNow() {
+  $("retry-now").disabled = true;
+  try {
+    await api("/api/uploads/retry", { method: "POST" });
+    setTimeout(refreshPending, 1500);
+  } catch (e) {
+    $("pending-error").textContent = e.message;
+  } finally {
+    setTimeout(() => ($("retry-now").disabled = false), 1500);
   }
 }
 
@@ -369,6 +414,7 @@ $("device").onchange = () => {
 };
 $("quality").oninput = () => ($("quality-out").textContent = $("quality").value);
 $("scan-form").onsubmit = startScan;
+$("retry-now").onclick = retryNow;
 
 restoreForm();
 loadDestinations();

@@ -85,6 +85,15 @@
       <ul id="jobs" class="jobs"></ul>
       <p id="jobs-empty" class="hint">No scans yet. Load the feeder and press Start scan.</p>
 
+      <div id="pending-section" hidden>
+        <div class="section-head">
+          <h2 id="pending-h">Waiting to upload</h2>
+          <button id="retry-now" type="button" class="ghost small">Retry now</button>
+        </div>
+        <ul id="pending" class="jobs"></ul>
+        <p id="pending-error" class="error"></p>
+      </div>
+
       <h2 id="files-h">Files</h2>
       <ul id="files" class="files"></ul>
       <p id="files-empty" class="hint">Finished scans appear here.</p>

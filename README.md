@@ -37,7 +37,9 @@ edit it, or pass `--config <file>`. Secrets can be given as `env:VARIABLE`.
 
 In the web UI, tick destinations under **Send to**, optionally with **Delete local copy
 after successful upload** (only deletes once every selected destination accepted the
-file). On the CLI:
+file). If an upload fails (destination down, wrong permissions, …), the web service keeps
+the file and retries every hour (`--retry-minutes`), also across restarts; the UI
+lists waiting uploads with a **Retry now** button. On the CLI (one-shot, no retries):
 
 ```sh
 scanner destinations
