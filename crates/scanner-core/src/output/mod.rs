@@ -139,6 +139,21 @@ pub fn create_sink(spec: &OutputSpec) -> Result<Box<dyn PageSink>> {
     })
 }
 
+/// MIME type of a scan file, by extension.
+pub fn content_type(path: &Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("pdf") => "application/pdf",
+        Some("png") => "image/png",
+        Some("jpg" | "jpeg") => "image/jpeg",
+        _ => "application/octet-stream",
+    }
+}
+
 /// File name for a single page image, e.g. `scan_003_back.jpg`.
 pub(crate) fn page_file_name(stem: &str, sheet: usize, side: Side, ext: &str) -> String {
     let suffix = match side {

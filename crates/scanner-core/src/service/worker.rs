@@ -10,6 +10,7 @@ use anyhow::Result;
 
 use super::jobs::{JobId, JobState, ScanRequest};
 use super::Shared;
+use crate::destination::{self, deliver_files, DeliveryReport};
 use crate::output::{create_sink, OutputSpec};
 use crate::scanner::{Backend, Capabilities, FoundDevice, ScanError, Until};
 
@@ -74,19 +75,48 @@ impl<B: Backend> Worker<B> {
         let (files, result) = self.scan(id, &job.request);
 
         self.shared.scanning.store(false, Ordering::SeqCst);
+
+        let state = match &result {
+            Ok(()) => JobState::Done,
+            Err(e) if e.downcast_ref::<ScanError>() == Some(&ScanError::Cancelled) => {
+                JobState::Cancelled
+            }
+            Err(_) => JobState::Failed,
+        };
+        let error = result.err().filter(|_| state == JobState::Failed);
+
+        // Only complete batches leave the machine; partial ones stay local.
+        let mut report = DeliveryReport::default();
+        if state == JobState::Done && !job.request.destinations.is_empty() {
+            jobs.update(id, |j| {
+                j.files = files.clone();
+                j.state = JobState::Delivering;
+            });
+            // Ids were validated on submit; a missing one is reported, not skipped.
+            match destination::select(&self.shared.destinations, &job.request.destinations) {
+                Ok(dests) => {
+                    report = deliver_files(
+                        &dests,
+                        &self.shared.output_dir,
+                        &files,
+                        job.request.delete_after_delivery,
+                    );
+                }
+                Err(msg) => report.deliveries.push(destination::Delivery {
+                    destination: String::new(),
+                    file: String::new(),
+                    result: Err(msg),
+                }),
+            }
+        }
+
         jobs.update(id, |j| {
             j.files = files;
+            j.deliveries = report.deliveries;
+            j.deleted_files = report.deleted;
             j.finished = Some(SystemTime::now());
-            match result {
-                Ok(()) => j.state = JobState::Done,
-                Err(e) if e.downcast_ref::<ScanError>() == Some(&ScanError::Cancelled) => {
-                    j.state = JobState::Cancelled;
-                }
-                Err(e) => {
-                    j.state = JobState::Failed;
-                    j.error = Some(format!("{e:#}"));
-                }
-            }
+            j.state = state;
+            j.error = error.map(|e| format!("{e:#}"));
         });
     }
 

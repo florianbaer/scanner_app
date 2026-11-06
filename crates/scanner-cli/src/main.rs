@@ -6,6 +6,7 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
+use scanner_core::destination::{self, SharedDestination};
 use scanner_core::output::{self, Format, OutputSpec};
 use scanner_core::scanner::{Backend, ColorMode, FoundDevice, ScanSettings, Side, Source, Until};
 use scanner_sane::{fmt_num, Constraint, SaneBackend, ValueType};
@@ -16,6 +17,10 @@ use scanner_sane::{fmt_num, Constraint, SaneBackend, ValueType};
     about = "Scan wirelessly from an Epson FastFoto FF-680W (or any SANE scanner)"
 )]
 struct Cli {
+    /// Destinations config (TOML). Defaults to ./scanner.toml if it exists.
+    #[arg(short, long, global = true, env = "SCANNER_CONFIG")]
+    config: Option<PathBuf>,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -28,6 +33,8 @@ enum Command {
     Options(DeviceArgs),
     /// Scan everything in the feeder.
     Scan(ScanArgs),
+    /// List configured destinations (Paperless, S3, …).
+    Destinations,
 }
 
 #[derive(Args)]
@@ -86,6 +93,14 @@ struct ScanArgs {
     #[arg(long, default_value = "scan")]
     name: String,
 
+    /// Also send the result to this destination (see `destinations`). Repeatable.
+    #[arg(long = "to", value_name = "ID")]
+    to: Vec<String>,
+
+    /// Delete the local copy once every --to destination accepted the upload.
+    #[arg(long, requires = "to")]
+    delete_after_upload: bool,
+
     /// Set a raw scanner option (see `options`), e.g. --set adf-skew=no. Repeatable.
     #[arg(long = "set", value_name = "NAME=VALUE", value_parser = parse_key_value)]
     extra: Vec<(String, String)>,
@@ -119,12 +134,32 @@ fn main() {
 }
 
 fn run(cli: Cli) -> Result<()> {
+    let destinations = scanner_destinations::load_configured(cli.config.as_deref())
+        .context("loading destinations")?;
+    if let Command::Destinations = cli.command {
+        return list_destinations(&destinations);
+    }
     let backend = SaneBackend::new()?;
     match cli.command {
         Command::List(args) => list(&backend, &args),
         Command::Options(args) => options(&backend, &args),
-        Command::Scan(args) => scan(&backend, args),
+        Command::Scan(args) => scan(&backend, &destinations, args),
+        Command::Destinations => unreachable!("handled above"),
     }
+}
+
+fn list_destinations(destinations: &[SharedDestination]) -> Result<()> {
+    if destinations.is_empty() {
+        println!(
+            "No destinations configured. Create {} (see scanner.example.toml) or pass --config.",
+            scanner_destinations::DEFAULT_CONFIG
+        );
+    }
+    for d in destinations {
+        let info = d.info();
+        println!("{}\t{}\t{}", info.id, info.kind, info.label);
+    }
+    Ok(())
 }
 
 fn list(backend: &SaneBackend, args: &DiscoverArgs) -> Result<()> {
@@ -195,7 +230,9 @@ fn options(backend: &SaneBackend, args: &DeviceArgs) -> Result<()> {
     Ok(())
 }
 
-fn scan(backend: &SaneBackend, args: ScanArgs) -> Result<()> {
+fn scan(backend: &SaneBackend, destinations: &[SharedDestination], args: ScanArgs) -> Result<()> {
+    // Validate destinations before feeding any paper.
+    let targets = destination::select(destinations, &args.to).map_err(anyhow::Error::msg)?;
     let name = resolve_device(backend, &args.device)?;
     let mut scanner = backend
         .open(&name)
@@ -222,7 +259,7 @@ fn scan(backend: &SaneBackend, args: ScanArgs) -> Result<()> {
         FormatArg::Jpeg => Format::Jpeg,
         FormatArg::Png => Format::Png,
     };
-    let spec = OutputSpec::timestamped(args.out, &args.name, format, args.quality);
+    let spec = OutputSpec::timestamped(args.out.clone(), &args.name, format, args.quality);
 
     let mut sink = output::create_sink(&spec)?;
     eprintln!("Scanning at {} dpi…", settings.dpi);
@@ -245,8 +282,38 @@ fn scan(backend: &SaneBackend, args: ScanArgs) -> Result<()> {
     let files = sink.finish()?;
     let count = count?;
     eprintln!("Scanned {count} page(s).");
-    for f in files {
+    for f in &files {
         println!("{}", f.display());
+    }
+
+    if targets.is_empty() {
+        return Ok(());
+    }
+    let names: Vec<String> = files
+        .iter()
+        .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .collect();
+    let report = destination::deliver_files(&targets, &args.out, &names, args.delete_after_upload);
+    let mut failed = 0;
+    for d in &report.deliveries {
+        match &d.result {
+            Ok(location) => eprintln!("  ✓ {} → {}: {location}", d.file, d.destination),
+            Err(e) => {
+                failed += 1;
+                let to = if d.destination.is_empty() {
+                    "local"
+                } else {
+                    &d.destination
+                };
+                eprintln!("  ✗ {} → {to}: {e}", d.file);
+            }
+        }
+    }
+    for f in &report.deleted {
+        eprintln!("  removed local copy {f}");
+    }
+    if failed > 0 {
+        bail!("{failed} upload(s) failed; local files were kept");
     }
     Ok(())
 }

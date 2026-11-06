@@ -1,3 +1,5 @@
 /target
 /scans
 .DS_Store
+# local config may contain secrets
+scanner.toml

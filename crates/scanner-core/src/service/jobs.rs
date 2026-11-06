@@ -4,6 +4,7 @@ use std::collections::VecDeque;
 use std::sync::Mutex;
 use std::time::SystemTime;
 
+use crate::destination::Delivery;
 use crate::output::Format;
 use crate::scanner::ScanSettings;
 
@@ -21,12 +22,18 @@ pub struct ScanRequest {
     pub jpeg_quality: u8,
     /// File name prefix; sanitised and timestamped by the output layer.
     pub name: String,
+    /// Destination ids to send the finished files to (besides the local folder).
+    pub destinations: Vec<String>,
+    /// Remove the local copy of a file once every destination accepted it.
+    pub delete_after_delivery: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JobState {
     Queued,
     Scanning,
+    /// Scan finished; sending files to destinations.
+    Delivering,
     Done,
     Failed,
     Cancelled,
@@ -44,6 +51,7 @@ impl JobState {
         match self {
             JobState::Queued => "queued",
             JobState::Scanning => "scanning",
+            JobState::Delivering => "delivering",
             JobState::Done => "done",
             JobState::Failed => "failed",
             JobState::Cancelled => "cancelled",
@@ -60,6 +68,10 @@ pub struct Job {
     pub pages: usize,
     /// Output file names (relative to the service's output directory).
     pub files: Vec<String>,
+    /// One entry per (destination, file) once delivery has run.
+    pub deliveries: Vec<Delivery>,
+    /// Files removed locally after successful delivery (no longer in `files`' folder).
+    pub deleted_files: Vec<String>,
     pub error: Option<String>,
     pub created: SystemTime,
     pub finished: Option<SystemTime>,
@@ -94,6 +106,8 @@ impl JobStore {
             state: JobState::Queued,
             pages: 0,
             files: Vec::new(),
+            deliveries: Vec::new(),
+            deleted_files: Vec::new(),
             error: None,
             created: SystemTime::now(),
             finished: None,

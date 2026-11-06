@@ -54,11 +54,21 @@ crates/
                  No SANE, no HTTP. Unit-tested with a fake backend.
   scanner-sane   SANE FFI (the only `unsafe` code), SANE adapter, Epson mDNS discovery.
                  Implements core's `Backend`. Only crate that links libsane.
+  scanner-destinations
+                 Where finished files go besides the local folder: Paperless-ngx, S3.
+                 Implements core's `Destination`; TOML config with `env:VAR` secrets.
   scanner-cli    `scanner` binary. Thin front-end.
   scanner-web    `scanner-web` binary: axum JSON API + embedded static UI. Thin front-end.
 ```
 
-Dependency rule: `cli`/`web` → `sane` → `core`. Core depends on nothing above it.
+Dependency rule: `cli`/`web` → `sane`, `destinations` → `core`. Core depends on
+nothing above it. Front-ends compose backend + destinations and hand them to core.
+
+Destinations: files are always written locally first. Only completed batches are
+delivered; one failing destination never blocks the others. "Delete after upload"
+removes a local file only if *every* selected destination accepted it
+(`destination::deliver_files`, shared by worker and CLI). Secrets stay server-side:
+the API exposes only destination ids, labels and kinds.
 
 Scan service: one worker thread owns the `Backend`; scans, discovery and capability
 queries are commands on an mpsc channel, so device access is serialised. Job state

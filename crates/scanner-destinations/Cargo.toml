@@ -1,0 +1,15 @@
+[package]
+name = "scanner-destinations"
+description = "Destinations for finished scans (Paperless-ngx, S3) and their TOML configuration"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+scanner-core.workspace = true
+anyhow.workspace = true
+serde = { version = "1", features = ["derive"] }
+toml = "0.9"
+# Blocking HTTP for Paperless; uploads run on the scan worker thread, not in async code.
+ureq = "3"
+# S3 with SigV4 signing; blocking (`sync`) mode to match the worker thread.
+rust-s3 = { version = "0.38", default-features = false, features = ["sync-rustls-tls", "fail-on-err"] }

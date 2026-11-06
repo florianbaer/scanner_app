@@ -1,0 +1,23 @@
+# Destinations for finished scans. Copy to scanner.toml (git-ignored) and edit.
+# Secrets can be written as "env:VARIABLE" to read them from the environment
+# instead of storing them in this file.
+
+[[destination]]
+id = "paperless"                       # used in the web UI and with `scan --to paperless`
+label = "Paperless"
+type = "paperless"
+url = "https://paperless.example.com"
+token = "env:PAPERLESS_TOKEN"          # Paperless: Profile → API Auth Token
+tags = []                              # optional tag ids, e.g. [1, 4]
+
+[[destination]]
+id = "archive"
+label = "S3 archive"
+type = "s3"
+endpoint = "https://fsn1.your-objectstorage.com"   # Hetzner, MinIO, AWS, …
+region = "fsn1"
+bucket = "my-scans"
+prefix = "scans/"                      # optional key prefix
+access_key = "env:S3_ACCESS_KEY"
+secret_key = "env:S3_SECRET_KEY"
+path_style = false                     # true for MinIO-style endpoint/bucket URLs

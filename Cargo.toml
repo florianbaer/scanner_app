@@ -10,5 +10,6 @@ repository = "https://github.com/florianbaer/scanner_app"
 [workspace.dependencies]
 scanner-core = { path = "crates/scanner-core" }
 scanner-sane = { path = "crates/scanner-sane" }
+scanner-destinations = { path = "crates/scanner-destinations" }
 anyhow = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }

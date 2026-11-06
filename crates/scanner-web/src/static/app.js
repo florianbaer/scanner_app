@@ -6,6 +6,7 @@ const SETTINGS_KEY = "scanner.settings.v1";
 
 const state = {
   devices: [],
+  destinations: [],
   capabilities: null,
   jobs: [],
   pollTimer: null,
@@ -106,6 +107,46 @@ function nearest(values, target) {
   return values.reduce((a, b) => (Math.abs(b - target) < Math.abs(a - target) ? b : a));
 }
 
+// --- destinations --------------------------------------------------------
+
+async function loadDestinations() {
+  try {
+    state.destinations = await api("/api/destinations");
+  } catch {
+    state.destinations = [];
+  }
+  const box = $("destinations");
+  box.innerHTML = "";
+  const saved = loadSettings().destinations || [];
+  for (const d of state.destinations) {
+    const label = el("label", "check");
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.name = "destination";
+    input.value = d.id;
+    input.checked = saved.includes(d.id);
+    input.onchange = syncDeleteOption;
+    label.append(input, ` ${d.label}`);
+    label.title = `${d.kind}: ${d.id}`;
+    box.append(label);
+  }
+  $("destinations-field").hidden = state.destinations.length === 0;
+  $("delete_after_upload").checked = !!loadSettings().delete_after_upload;
+  syncDeleteOption();
+}
+
+/** Deleting only makes sense when at least one destination is selected. */
+function syncDeleteOption() {
+  const any = document.querySelector('input[name="destination"]:checked') !== null;
+  const box = $("delete_after_upload");
+  box.disabled = !any;
+  if (!any) box.checked = false;
+}
+
+function destinationLabel(id) {
+  return state.destinations.find((d) => d.id === id)?.label || id;
+}
+
 // --- settings persistence (per browser) ------------------------------------
 
 function loadSettings() {
@@ -148,13 +189,17 @@ function readForm() {
     auto_crop: $("auto_crop").checked,
     deskew: $("deskew").checked,
     name: $("name").value.trim() || "scan",
+    destinations: [...document.querySelectorAll('input[name="destination"]:checked')].map(
+      (i) => i.value,
+    ),
+    delete_after_upload: $("delete_after_upload").checked,
   };
 }
 
 // --- jobs ------------------------------------------------------------------
 
 function isActive(job) {
-  return job.state === "queued" || job.state === "scanning";
+  return job.state === "queued" || job.state === "scanning" || job.state === "delivering";
 }
 
 function updateStartButton() {
@@ -227,6 +272,7 @@ function renderJobs() {
     const title = {
       queued: "Waiting…",
       scanning: job.cancel_requested ? `Stopping… ${pages}` : `Scanning… ${pages}`,
+      delivering: `Sending ${pages} to ${job.destinations.map(destinationLabel).join(", ")}…`,
       done: `Scanned ${pages}`,
       failed: job.pages ? `Stopped after ${pages}` : "Scan failed",
       cancelled: `Cancelled · ${pages}`,
@@ -237,9 +283,18 @@ function renderJobs() {
       el("div", "meta", `${time(job.created)} · ${job.resolution} dpi · ${job.mode} · ${sides} · ${job.format.toUpperCase()}`),
     );
     if (job.error) info.append(el("div", "job-error", job.error));
+    if (job.deleted_files.length) {
+      info.append(el("div", "meta", "Local copy deleted after upload"));
+    }
+    for (const d of job.deliveries) {
+      const name = d.destination ? destinationLabel(d.destination) : "This computer";
+      info.append(
+        el("div", d.ok ? "delivery ok" : "delivery failed", `${d.ok ? "✓" : "✗"} ${name}: ${d.message}`),
+      );
+    }
     li.append(info);
 
-    if (isActive(job) && !job.cancel_requested) {
+    if (isActive(job) && job.state !== "delivering" && !job.cancel_requested) {
       const btn = el("button", "ghost", "Cancel");
       btn.type = "button";
       btn.onclick = () => cancelJob(job.id);
@@ -316,6 +371,7 @@ $("quality").oninput = () => ($("quality-out").textContent = $("quality").value)
 $("scan-form").onsubmit = startScan;
 
 restoreForm();
+loadDestinations();
 refreshJobs();
 refreshFiles();
 loadDevices();

@@ -11,5 +11,6 @@ path = "src/main.rs"
 [dependencies]
 scanner-core.workspace = true
 scanner-sane.workspace = true
+scanner-destinations.workspace = true
 anyhow.workspace = true
 clap = { version = "4", features = ["derive", "env"] }

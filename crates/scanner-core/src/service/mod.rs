@@ -26,6 +26,7 @@ use anyhow::{anyhow, Result};
 
 pub use jobs::{Job, JobId, JobState, ScanRequest};
 
+use crate::destination::{self, DestinationInfo, SharedDestination};
 use crate::output::{self, StoredFile};
 use crate::scanner::{Backend, Capabilities, FoundDevice};
 use jobs::JobStore;
@@ -58,6 +59,7 @@ pub(crate) struct Shared {
     pub scanning: AtomicBool,
     pub devices: Mutex<Vec<FoundDevice>>,
     pub capabilities: Mutex<HashMap<String, Capabilities>>,
+    pub destinations: Vec<SharedDestination>,
 }
 
 /// Result of a discovery request.
@@ -75,14 +77,20 @@ pub struct ScannerService {
 }
 
 impl ScannerService {
-    /// Starts the worker thread. Output files are written to `output_dir`.
-    pub fn start(backend: impl Backend, output_dir: PathBuf) -> Result<Self> {
+    /// Starts the worker thread. Output files are written to `output_dir`;
+    /// `destinations` are the targets scans may additionally be sent to.
+    pub fn start(
+        backend: impl Backend,
+        output_dir: PathBuf,
+        destinations: Vec<SharedDestination>,
+    ) -> Result<Self> {
         let shared = Arc::new(Shared {
             jobs: JobStore::default(),
             output_dir,
             scanning: AtomicBool::new(false),
             devices: Mutex::new(Vec::new()),
             capabilities: Mutex::new(HashMap::new()),
+            destinations,
         });
         let (tx, rx) = mpsc::channel();
         let worker = Worker {
@@ -143,6 +151,14 @@ impl ScannerService {
         if !(1..=100).contains(&request.jpeg_quality) {
             return Err(ServiceError::Invalid("quality must be between 1 and 100".into()).into());
         }
+        destination::select(&self.shared.destinations, &request.destinations)
+            .map_err(ServiceError::Invalid)?;
+        if request.delete_after_delivery && request.destinations.is_empty() {
+            return Err(ServiceError::Invalid(
+                "delete after upload needs at least one destination".into(),
+            )
+            .into());
+        }
         if let Some(caps) = lock(&self.shared.capabilities).get(&request.device) {
             request
                 .settings
@@ -154,6 +170,11 @@ impl ScannerService {
             .send(Command::Scan(id))
             .map_err(|_| anyhow!("scan worker has stopped"))?;
         Ok(id)
+    }
+
+    /// Configured destinations (ids and labels only, no secrets).
+    pub fn destinations(&self) -> Vec<DestinationInfo> {
+        self.shared.destinations.iter().map(|d| d.info()).collect()
     }
 
     /// All recent jobs, newest first.

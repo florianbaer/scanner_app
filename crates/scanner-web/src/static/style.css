@@ -110,6 +110,8 @@ output { font-weight: 400; color: var(--muted); margin-left: 4px; }
 .check { display: inline-flex; align-items: center; gap: 6px; margin: 0 16px 6px 0; cursor: pointer; }
 .check input { accent-color: var(--accent); width: 16px; height: 16px; }
 .check:has(input:disabled) { opacity: .45; cursor: default; }
+.check.sub { display: flex; margin-top: 6px; }
+#destinations .check { margin-right: 16px; }
 
 button {
   font: inherit;
@@ -163,6 +165,10 @@ ul { list-style: none; margin: 0; padding: 0; }
 .badge.scanning, .badge.queued { color: var(--accent); }
 .badge.cancelled { color: var(--muted); }
 .job-error { color: var(--bad); font-size: 13px; margin-top: 2px; }
+.delivery { font-size: 13px; margin-top: 2px; overflow-wrap: anywhere; }
+.delivery.ok { color: var(--ok); }
+.delivery.failed { color: var(--bad); }
+.badge.delivering { color: var(--accent); }
 
 .spinner {
   width: 14px; height: 14px; flex: none;

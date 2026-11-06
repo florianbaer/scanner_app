@@ -9,6 +9,7 @@ use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use scanner_core::output;
 use scanner_core::service::{ScanRequest, ScannerService};
 
 use crate::dto;
@@ -26,6 +27,7 @@ pub fn router(service: AppState) -> Router {
         .route("/style.css", get(style_css))
         .route("/api/devices", get(devices))
         .route("/api/capabilities", get(capabilities))
+        .route("/api/destinations", get(destinations))
         .route("/api/jobs", get(list_jobs).post(create_job))
         .route("/api/jobs/{id}", get(get_job))
         .route("/api/jobs/{id}/cancel", post(cancel_job))
@@ -73,6 +75,10 @@ async fn capabilities(
     Ok(Json(caps.into()))
 }
 
+async fn destinations(State(svc): State<AppState>) -> Json<Vec<dto::DestinationDto>> {
+    Json(svc.destinations().into_iter().map(Into::into).collect())
+}
+
 // --- jobs --------------------------------------------------------------------
 
 async fn list_jobs(State(svc): State<AppState>) -> Json<Vec<dto::JobDto>> {
@@ -117,11 +123,7 @@ async fn download(
         .file_path(&name)
         .ok_or_else(|| ApiError::not_found("file"))?;
     let bytes = tokio::fs::read(&path).await?;
-    let content_type = match path.extension().and_then(|e| e.to_str()) {
-        Some("pdf") => "application/pdf",
-        Some("png") => "image/png",
-        _ => "image/jpeg",
-    };
+    let content_type = output::content_type(&path);
     // `name` is validated by core to [A-Za-z0-9._-], so it is safe in the header.
     let disposition = format!(
         "{}; filename=\"{name}\"",

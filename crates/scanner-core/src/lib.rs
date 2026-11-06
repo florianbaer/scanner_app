@@ -5,7 +5,9 @@
 //! - [`service`]: the scan service: job store plus a single worker that owns the scanner.
 //! - [`raster`], [`output`]: pure image decoding and PDF/JPEG/PNG writing.
 //! - [`discovery`]: merging results from several device sources.
+//! - [`destination`]: the contract for sending finished files elsewhere (Paperless, S3, …).
 
+pub mod destination;
 pub mod discovery;
 pub mod output;
 pub mod raster;

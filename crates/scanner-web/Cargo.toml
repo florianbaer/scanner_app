@@ -7,6 +7,7 @@ edition.workspace = true
 [dependencies]
 scanner-core.workspace = true
 scanner-sane.workspace = true
+scanner-destinations.workspace = true
 anyhow.workspace = true
 axum = "0.8"
 chrono.workspace = true

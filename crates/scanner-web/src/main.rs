@@ -31,13 +31,27 @@ struct Args {
     /// Directory where finished scans are stored.
     #[arg(short, long, env = "SCANNER_OUT", default_value = "scans")]
     out: PathBuf,
+
+    /// Destinations config (TOML). Defaults to ./scanner.toml if it exists.
+    #[arg(short, long, env = "SCANNER_CONFIG")]
+    config: Option<PathBuf>,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
     let backend = SaneBackend::new().context("initialising SANE")?;
-    let service = Arc::new(ScannerService::start(backend, args.out.clone())?);
+    let destinations = scanner_destinations::load_configured(args.config.as_deref())
+        .context("loading destinations")?;
+    for d in &destinations {
+        let info = d.info();
+        eprintln!("Destination: {} ({}, {})", info.label, info.id, info.kind);
+    }
+    let service = Arc::new(ScannerService::start(
+        backend,
+        args.out.clone(),
+        destinations,
+    )?);
 
     let addr = SocketAddr::new(args.host, args.port);
     let listener = tokio::net::TcpListener::bind(addr)

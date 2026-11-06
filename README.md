@@ -29,6 +29,21 @@ cargo run --release -p scanner-cli -- options     # raw scanner options
 
 Scans go to `./scans` by default.
 
+## Destinations (Paperless-ngx, S3)
+
+Scans are always saved locally first; they can also be sent to Paperless-ngx or any
+S3-compatible storage. Copy `scanner.example.toml` to `scanner.toml` (git-ignored) and
+edit it, or pass `--config <file>`. Secrets can be given as `env:VARIABLE`.
+
+In the web UI, tick destinations under **Send to**, optionally with **Delete local copy
+after successful upload** (only deletes once every selected destination accepted the
+file). On the CLI:
+
+```sh
+scanner destinations
+scanner scan --to paperless --to archive --delete-after-upload
+```
+
 ## Architecture
 
 See [AGENTS.md](AGENTS.md).

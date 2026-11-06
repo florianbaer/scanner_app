@@ -6,6 +6,8 @@ use std::time::{Duration, Instant};
 use image::{DynamicImage, RgbImage};
 
 use super::*;
+use crate::destination::testing::Recorder;
+use crate::destination::SharedDestination;
 use crate::output::Format;
 use crate::scanner::{
     Backend, Capabilities, ColorMode, Page, ScanError, ScanSettings, Scanner, Side, Source, Until,
@@ -83,11 +85,20 @@ impl Drop for TempDir {
 }
 
 fn service(pages: usize, delay_ms: u64, dir: &TempDir) -> ScannerService {
+    service_with(pages, delay_ms, dir, Vec::new())
+}
+
+fn service_with(
+    pages: usize,
+    delay_ms: u64,
+    dir: &TempDir,
+    destinations: Vec<SharedDestination>,
+) -> ScannerService {
     let backend = FakeBackend {
         pages,
         page_delay: Duration::from_millis(delay_ms),
     };
-    ScannerService::start(backend, dir.0.clone()).unwrap()
+    ScannerService::start(backend, dir.0.clone(), destinations).unwrap()
 }
 
 fn request() -> ScanRequest {
@@ -97,6 +108,8 @@ fn request() -> ScanRequest {
         format: Format::Pdf,
         jpeg_quality: 80,
         name: "test".into(),
+        destinations: Vec::new(),
+        delete_after_delivery: false,
     }
 }
 
@@ -185,4 +198,104 @@ fn discovery_and_capabilities_validate_requests() {
     let mut duplex = request();
     duplex.settings.source = Source::FeederDuplex;
     assert!(svc.submit(duplex).is_err());
+}
+
+#[test]
+fn finished_scan_is_delivered_and_failures_are_reported() {
+    let dir = TempDir::new("deliver");
+    let good = Recorder::new("good", false);
+    let bad = Recorder::new("bad", true);
+    let svc = service_with(2, 0, &dir, vec![good.clone(), bad]);
+    assert_eq!(svc.destinations().len(), 2);
+
+    let mut req = request();
+    req.destinations = vec!["good".into(), "bad".into()];
+    let job = wait_finished(&svc, svc.submit(req).unwrap());
+
+    assert_eq!(
+        job.state,
+        JobState::Done,
+        "a failed upload doesn't fail the scan"
+    );
+    assert_eq!(*good.delivered.lock().unwrap(), job.files);
+    assert_eq!(job.deliveries.len(), 2);
+    assert!(job.deliveries[0].result.is_ok());
+    assert_eq!(job.deliveries[1].result, Err("upload refused".into()));
+    assert!(svc.file_path(&job.files[0]).is_some(), "local copy is kept");
+}
+
+#[test]
+fn unknown_destination_is_rejected_on_submit() {
+    let dir = TempDir::new("unknown_dest");
+    let svc = service(1, 0, &dir);
+    let mut req = request();
+    req.destinations = vec!["nowhere".into()];
+    let err = svc.submit(req).unwrap_err();
+    assert_eq!(
+        err.downcast_ref::<ServiceError>(),
+        Some(&ServiceError::Invalid(
+            "unknown destination 'nowhere'".into()
+        ))
+    );
+}
+
+#[test]
+fn cancelled_scan_is_not_delivered() {
+    let dir = TempDir::new("cancel_dest");
+    let rec = Recorder::new("rec", false);
+    let svc = service_with(50, 20, &dir, vec![rec.clone()]);
+    let mut req = request();
+    req.destinations = vec!["rec".into()];
+    let id = svc.submit(req).unwrap();
+    while svc.job(id).unwrap().pages == 0 {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    svc.cancel(id);
+    let job = wait_finished(&svc, id);
+    assert_eq!(job.state, JobState::Cancelled);
+    assert!(job.deliveries.is_empty());
+    assert!(rec.delivered.lock().unwrap().is_empty());
+}
+
+#[test]
+fn local_copy_deleted_only_when_every_destination_succeeded() {
+    let dir = TempDir::new("delete_ok");
+    let svc = service_with(
+        1,
+        0,
+        &dir,
+        vec![Recorder::new("a", false), Recorder::new("b", false)],
+    );
+    let mut req = request();
+    req.destinations = vec!["a".into(), "b".into()];
+    req.delete_after_delivery = true;
+    let job = wait_finished(&svc, svc.submit(req).unwrap());
+    assert_eq!(job.deleted_files, job.files);
+    assert!(svc.file_path(&job.files[0]).is_none(), "local copy removed");
+}
+
+#[test]
+fn local_copy_kept_when_any_upload_failed() {
+    let dir = TempDir::new("delete_partial");
+    let svc = service_with(
+        1,
+        0,
+        &dir,
+        vec![Recorder::new("ok", false), Recorder::new("bad", true)],
+    );
+    let mut req = request();
+    req.destinations = vec!["ok".into(), "bad".into()];
+    req.delete_after_delivery = true;
+    let job = wait_finished(&svc, svc.submit(req).unwrap());
+    assert!(job.deleted_files.is_empty());
+    assert!(svc.file_path(&job.files[0]).is_some(), "local copy kept");
+}
+
+#[test]
+fn delete_without_destination_is_rejected() {
+    let dir = TempDir::new("delete_nodest");
+    let svc = service(1, 0, &dir);
+    let mut req = request();
+    req.delete_after_delivery = true;
+    assert!(svc.submit(req).is_err());
 }

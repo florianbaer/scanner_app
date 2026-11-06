@@ -57,6 +57,13 @@
           <label class="check"><input type="checkbox" name="deskew" id="deskew" checked> Straighten</label>
         </fieldset>
 
+        <fieldset class="field" id="destinations-field" hidden>
+          <legend>Send to</legend>
+          <span id="destinations"></span>
+          <label class="check sub"><input type="checkbox" id="delete_after_upload" disabled> Delete local copy after successful upload</label>
+          <p class="hint">Files are always saved here first; with this on, they're removed only once every selected destination has confirmed the upload.</p>
+        </fieldset>
+
         <div class="grid2">
           <div class="field">
             <label for="quality">Quality <output id="quality-out">90</output></label>

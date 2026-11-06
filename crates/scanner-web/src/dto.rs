@@ -3,6 +3,7 @@
 
 use std::time::SystemTime;
 
+use scanner_core::destination::{Delivery, DestinationInfo};
 use scanner_core::output::{Format, StoredFile};
 use scanner_core::scanner::{Capabilities, ColorMode, FoundDevice, ScanSettings, Source};
 use scanner_core::service::{DeviceList, Job, ScanRequest};
@@ -66,6 +67,47 @@ impl From<Capabilities> for CapabilitiesDto {
     }
 }
 
+#[derive(Serialize)]
+pub struct DestinationDto {
+    pub id: String,
+    pub label: String,
+    pub kind: &'static str,
+}
+
+impl From<DestinationInfo> for DestinationDto {
+    fn from(d: DestinationInfo) -> Self {
+        Self {
+            id: d.id,
+            label: d.label,
+            kind: d.kind,
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub struct DeliveryDto {
+    pub destination: String,
+    pub file: String,
+    pub ok: bool,
+    /// Where it went, or the error message.
+    pub message: String,
+}
+
+impl From<Delivery> for DeliveryDto {
+    fn from(d: Delivery) -> Self {
+        let (ok, message) = match d.result {
+            Ok(m) => (true, m),
+            Err(m) => (false, m),
+        };
+        Self {
+            destination: d.destination,
+            file: d.file,
+            ok,
+            message,
+        }
+    }
+}
+
 #[derive(Deserialize)]
 pub struct DeviceQuery {
     pub device: String,
@@ -90,6 +132,12 @@ pub struct NewScan {
     pub quality: u8,
     #[serde(default = "default_name")]
     pub name: String,
+    /// Destination ids to also send the result to.
+    #[serde(default)]
+    pub destinations: Vec<String>,
+    /// Remove the local copy once every destination accepted it.
+    #[serde(default)]
+    pub delete_after_upload: bool,
 }
 
 fn default_mode() -> String {
@@ -134,6 +182,8 @@ impl TryFrom<NewScan> for ScanRequest {
             format,
             jpeg_quality: n.quality,
             name: n.name,
+            destinations: n.destinations,
+            delete_after_delivery: n.delete_after_upload,
         })
     }
 }
@@ -154,6 +204,10 @@ pub struct JobDto {
     pub format: &'static str,
     pub pages: usize,
     pub files: Vec<String>,
+    pub destinations: Vec<String>,
+    pub deliveries: Vec<DeliveryDto>,
+    pub delete_after_upload: bool,
+    pub deleted_files: Vec<String>,
     pub error: Option<String>,
     pub cancel_requested: bool,
     pub created: String,
@@ -173,6 +227,10 @@ impl From<Job> for JobDto {
             format: j.request.format.as_str(),
             pages: j.pages,
             files: j.files,
+            destinations: j.request.destinations.clone(),
+            deliveries: j.deliveries.into_iter().map(Into::into).collect(),
+            delete_after_upload: j.request.delete_after_delivery,
+            deleted_files: j.deleted_files,
             error: j.error,
             cancel_requested: j.cancel_requested,
             created: timestamp(j.created),
