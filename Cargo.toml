@@ -1,0 +1,16 @@
+[package]
+name = "scanner_app"
+version = "0.1.0"
+edition = "2021"
+description = "Scan wirelessly from an Epson FastFoto FF-680W (or any SANE scanner)"
+
+[dependencies]
+anyhow = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+clap = { version = "4", features = ["derive", "env"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+# Bonjour fallback: SANE's own network autodiscovery misses the FF-680W on some networks.
+mdns-sd = "0.21"
+
+[build-dependencies]
+pkg-config = "0.3"
