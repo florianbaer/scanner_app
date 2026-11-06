@@ -1280,6 +1280,7 @@ dependencies = [
  "rust-s3",
  "scanner-core",
  "serde",
+ "serde_json",
  "toml",
  "ureq",
 ]

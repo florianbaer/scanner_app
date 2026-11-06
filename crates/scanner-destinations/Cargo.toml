@@ -8,6 +8,7 @@ edition.workspace = true
 scanner-core.workspace = true
 anyhow.workspace = true
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 toml = "0.9"
 # Blocking HTTP for Paperless; uploads run on the scan worker thread, not in async code.
 ureq = "3"

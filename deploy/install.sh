@@ -23,9 +23,10 @@ sudo install -d -m 755 /opt/scanner
 sudo install -m 755 "$STAGE/scanner-web" "$STAGE/scanner" /opt/scanner/
 sudo install -m 644 "$STAGE/scanner.example.toml" /etc/scanner/scanner.example.toml
 # Keep existing config/secrets; create empty ones on first install.
-[ -f /etc/scanner/scanner.toml ] || printf '# See scanner.example.toml. No destinations configured yet.\n' \
+# /etc/scanner is not readable by the SSH user, so these checks must use sudo.
+sudo test -f /etc/scanner/scanner.toml || printf '# See scanner.example.toml. No destinations configured yet.\n' \
   | sudo install -o root -g scanner-web -m 640 /dev/stdin /etc/scanner/scanner.toml
-[ -f /etc/scanner/scanner.env ] || sudo install -o root -g root -m 600 /dev/null /etc/scanner/scanner.env
+sudo test -f /etc/scanner/scanner.env || sudo install -o root -g root -m 600 /dev/null /etc/scanner/scanner.env
 sudo install -m 644 "$STAGE/scanner-web.service" /etc/systemd/system/scanner-web.service
 sudo systemctl daemon-reload
 sudo systemctl enable --quiet scanner-web

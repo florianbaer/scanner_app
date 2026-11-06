@@ -8,7 +8,7 @@ label = "Paperless"
 type = "paperless"
 url = "https://paperless.example.com"
 token = "env:PAPERLESS_TOKEN"          # Paperless: Profile → API Auth Token
-tags = []                              # optional tag ids, e.g. [1, 4]
+tags = ["scanning-app"]                # optional; ids (4) or names (needs "Tags: View"/"Tags: Add")
 
 [[destination]]
 id = "archive"

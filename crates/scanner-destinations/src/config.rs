@@ -48,9 +48,19 @@ pub struct PaperlessConfig {
     pub url: String,
     /// API token (Paperless: Profile → API Auth Token).
     pub token: Secret,
-    /// Tag ids to assign to every uploaded document.
+    /// Tags for every uploaded document: ids (`7`) or names (`"scanning-app"`).
+    /// Names are looked up (and created if missing) via the API, which needs the
+    /// Paperless user to have "Tags: View" (and "Tags: Add" to create).
     #[serde(default)]
-    pub tags: Vec<u64>,
+    pub tags: Vec<TagRef>,
+}
+
+/// A Paperless tag, by id or by name.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(untagged)]
+pub enum TagRef {
+    Id(u64),
+    Name(String),
 }
 
 #[derive(Debug, Deserialize)]
@@ -151,7 +161,7 @@ mod tests {
             type = "paperless"
             url = "https://p.example"
             token = "env:SCANNER_TEST_TOKEN"
-            tags = [3]
+            tags = [3, "scanning-app"]
 
             [[destination]]
             id = "archive"
@@ -171,7 +181,7 @@ mod tests {
             panic!()
         };
         assert_eq!(p.token.expose(), "t0ken");
-        assert_eq!(p.tags, [3]);
+        assert_eq!(p.tags, [TagRef::Id(3), TagRef::Name("scanning-app".into())]);
         let Kind::S3(s) = &c.destinations[1].kind else {
             panic!()
         };
