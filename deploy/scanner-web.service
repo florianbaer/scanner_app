@@ -1,0 +1,30 @@
+[Unit]
+Description=Scanner web UI (scan from SANE scanners, download, send to destinations)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=scanner-web
+Group=scanner-web
+WorkingDirectory=/var/lib/scanner
+# Secrets referenced as env:VAR in scanner.toml go here (root-only, mode 600).
+EnvironmentFile=-/etc/scanner/scanner.env
+ExecStart=/opt/scanner/scanner-web --host ${SCANNER_HOST} --port ${SCANNER_PORT} \
+  --out /var/lib/scanner/scans --config /etc/scanner/scanner.toml
+Environment=SCANNER_HOST=0.0.0.0
+Environment=SCANNER_PORT=8888
+Restart=on-failure
+RestartSec=5
+
+# Hardening: the service only writes its scans folder.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/scanner
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

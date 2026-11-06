@@ -44,6 +44,18 @@ scanner destinations
 scanner scan --to paperless --to archive --delete-after-upload
 ```
 
+## Deploy to a Raspberry Pi / Debian host
+
+```sh
+deploy/build-linux-arm64.sh            # builds in a bookworm arm64 container (podman/docker)
+deploy/install.sh user@host            # installs/updates the systemd service (port 8888)
+```
+
+On the host: binaries in `/opt/scanner`, scans in `/var/lib/scanner/scans`, config in
+`/etc/scanner/scanner.toml`, secrets in `/etc/scanner/scanner.env` (root-only, e.g.
+`PAPERLESS_TOKEN=…`). Re-running the installer keeps config and secrets.
+Logs: `journalctl -u scanner-web -f`.
+
 ## Architecture
 
 See [AGENTS.md](AGENTS.md).
