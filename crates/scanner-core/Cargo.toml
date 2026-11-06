@@ -1,0 +1,10 @@
+[package]
+name = "scanner-core"
+description = "Scanning domain model, output writers and the scan job service (backend-agnostic)"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }

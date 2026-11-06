@@ -1,10 +1,14 @@
-//! Safe wrapper around the SANE C API. This module (with `ffi`) is the only place
-//! in the crate that contains `unsafe` code.
+//! SANE backend for scanner-core. This crate is the only place in the workspace
+//! with `unsafe` code: raw declarations in `ffi`, the safe wrapper here.
 
 mod adapter;
+mod backend;
 mod ffi;
+mod mdns;
 
 pub use adapter::SaneScanner;
+pub use backend::{SaneBackend, SaneSource};
+pub use mdns::MdnsEpsonSource;
 
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
 use std::fmt;
@@ -12,7 +16,7 @@ use std::sync::{Arc, Mutex, Weak};
 
 use anyhow::{anyhow, bail};
 
-use crate::raster::{Channels, RasterFormat};
+use scanner_core::raster::{Channels, RasterFormat};
 
 /// A non-GOOD status returned by SANE.
 #[derive(Debug)]

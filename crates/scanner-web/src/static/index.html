@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Scanner</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="top">
+    <h1>Scanner</h1>
+    <span id="status" class="status" role="status"></span>
+  </header>
+
+  <main class="layout">
+    <section class="panel" aria-labelledby="scan-h">
+      <h2 id="scan-h">New scan</h2>
+
+      <div class="field">
+        <label for="device">Scanner</label>
+        <div class="row">
+          <select id="device" disabled><option>Searching…</option></select>
+          <button id="rescan" type="button" class="ghost" title="Search again">Search</button>
+        </div>
+        <p id="device-hint" class="hint"></p>
+      </div>
+
+      <form id="scan-form">
+        <fieldset class="field">
+          <legend>Color</legend>
+          <div class="segmented" id="mode">
+            <label><input type="radio" name="mode" value="color" checked><span>Color</span></label>
+            <label><input type="radio" name="mode" value="gray"><span>Gray</span></label>
+            <label><input type="radio" name="mode" value="lineart"><span>Black &amp; white</span></label>
+          </div>
+        </fieldset>
+
+        <div class="grid2">
+          <div class="field">
+            <label for="resolution">Resolution</label>
+            <select id="resolution" name="resolution"></select>
+          </div>
+          <div class="field">
+            <label for="format">File type</label>
+            <select id="format" name="format">
+              <option value="pdf">PDF (one file)</option>
+              <option value="jpeg">JPEG (per page)</option>
+              <option value="png">PNG (per page)</option>
+            </select>
+          </div>
+        </div>
+
+        <fieldset class="field">
+          <legend>Options</legend>
+          <label class="check"><input type="checkbox" name="duplex" id="duplex"> Both sides</label>
+          <label class="check"><input type="checkbox" name="auto_crop" id="auto_crop" checked> Crop to paper</label>
+          <label class="check"><input type="checkbox" name="deskew" id="deskew" checked> Straighten</label>
+        </fieldset>
+
+        <div class="grid2">
+          <div class="field">
+            <label for="quality">Quality <output id="quality-out">90</output></label>
+            <input type="range" id="quality" name="quality" min="40" max="100" step="5" value="90">
+          </div>
+          <div class="field">
+            <label for="name">File name</label>
+            <input type="text" id="name" name="name" value="scan" maxlength="40" autocomplete="off">
+          </div>
+        </div>
+
+        <button id="start" type="submit" class="primary" disabled>Start scan</button>
+        <p id="form-error" class="error" role="alert"></p>
+      </form>
+    </section>
+
+    <section class="panel" aria-labelledby="jobs-h">
+      <h2 id="jobs-h">Activity</h2>
+      <ul id="jobs" class="jobs"></ul>
+      <p id="jobs-empty" class="hint">No scans yet. Load the feeder and press Start scan.</p>
+
+      <h2 id="files-h">Files</h2>
+      <ul id="files" class="files"></ul>
+      <p id="files-empty" class="hint">Finished scans appear here.</p>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

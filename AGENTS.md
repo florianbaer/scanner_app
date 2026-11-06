@@ -1,7 +1,8 @@
 # scanner_app — agent guide
 
 Rust app for scanning over the network from an Epson FastFoto FF-680W (and any other
-SANE-supported scanner). First a CLI, then a small web UI for starting scans and downloading PDFs.
+SANE-supported scanner): a CLI and a web UI for discovering scanners, starting scans and
+downloading the PDFs.
 
 ## Always think about good software architecture
 
@@ -41,22 +42,33 @@ structure, fix the structure first. Don't bolt the change on.
   environment variables, or discovery. Never hard-code them, and never require editing
   system config files.
 
-### Target layout
+### Components
+
+A Cargo workspace; crate boundaries enforce the dependency direction.
 
 ```
-src/
-  lib.rs            core library: re-exports the public API
-  sane/             infrastructure: FFI + safe wrapper (only place with `unsafe`)
-  scanner.rs        domain: ScanSettings, ColorMode, Source, Page, Scanner trait
-  discovery.rs      finding devices: SANE device list + mDNS fallback
-  output/           PageSink trait + pdf.rs, image.rs writers
-  main.rs           CLI front-end (thin)
-  web/ (later)      web front-end (thin), reusing the same core
+crates/
+  scanner-core   domain model + Backend/Scanner traits, raster decoding, output
+                 (PDF/JPEG/PNG + file library), discovery merging, and service/:
+                 the scan service = JobStore + single Worker thread (job queue).
+                 No SANE, no HTTP. Unit-tested with a fake backend.
+  scanner-sane   SANE FFI (the only `unsafe` code), SANE adapter, Epson mDNS discovery.
+                 Implements core's `Backend`. Only crate that links libsane.
+  scanner-cli    `scanner` binary. Thin front-end.
+  scanner-web    `scanner-web` binary: axum JSON API + embedded static UI. Thin front-end.
 ```
+
+Dependency rule: `cli`/`web` → `sane` → `core`. Core depends on nothing above it.
+
+Scan service: one worker thread owns the `Backend`; scans, discovery and capability
+queries are commands on an mpsc channel, so device access is serialised. Job state
+lives in the shared `JobStore`, which front-ends read without waiting on the worker.
+Blocking service calls must run on a blocking thread in async code (`spawn_blocking`).
 
 ### Workflow
 
-- Run `cargo fmt`, `cargo clippy -- -D warnings`, and `cargo test` before calling work done.
+- Run `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, and
+  `cargo test --workspace` before calling work done.
 - Prefer few, well-known dependencies. Explain why in the commit message when adding one.
 - When unsure where something goes, write down the trade-off briefly in the PR or reply
   instead of guessing quietly.

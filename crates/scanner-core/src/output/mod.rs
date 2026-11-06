@@ -1,6 +1,7 @@
 //! Where scanned pages go: a `PageSink` per output format.
 
 mod image_files;
+mod library;
 mod pdf;
 mod pdf_writer;
 
@@ -15,6 +16,7 @@ use image::{DynamicImage, ExtendedColorType};
 use crate::scanner::{Page, Side};
 
 pub use image_files::ImageSink;
+pub use library::{list_files, resolve, StoredFile};
 pub use pdf::PdfSink;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,6 +27,28 @@ pub enum Format {
     Jpeg,
     /// One PNG per page.
     Png,
+}
+
+impl Format {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Format::Pdf => "pdf",
+            Format::Jpeg => "jpeg",
+            Format::Png => "png",
+        }
+    }
+}
+
+impl std::str::FromStr for Format {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "pdf" => Ok(Format::Pdf),
+            "jpeg" | "jpg" => Ok(Format::Jpeg),
+            "png" => Ok(Format::Png),
+            _ => Err(format!("unknown output format '{s}'")),
+        }
+    }
 }
 
 /// Receives pages during a scan and produces output files.
@@ -43,6 +67,65 @@ pub struct OutputSpec {
     pub format: Format,
     /// JPEG quality 1–100 (also used for images embedded in PDFs).
     pub jpeg_quality: u8,
+}
+
+impl OutputSpec {
+    /// A spec named `<prefix>_<YYYYmmdd_HHMMSS>`, made unique within `dir`.
+    /// The prefix is sanitised, so user input is safe to pass.
+    pub fn timestamped(dir: PathBuf, prefix: &str, format: Format, jpeg_quality: u8) -> Self {
+        let base = format!(
+            "{}_{}",
+            sanitize_prefix(prefix),
+            chrono::Local::now().format("%Y%m%d_%H%M%S")
+        );
+        let stem = unique_stem(&dir, &base);
+        Self {
+            dir,
+            stem,
+            format,
+            jpeg_quality,
+        }
+    }
+}
+
+/// Keeps `[A-Za-z0-9_-]`, max 40 chars; falls back to `scan`.
+pub fn sanitize_prefix(prefix: &str) -> String {
+    let s: String = prefix
+        .trim()
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .take(40)
+        .collect();
+    let s = s.trim_matches('_').to_string();
+    if s.is_empty() {
+        "scan".into()
+    } else {
+        s
+    }
+}
+
+/// Appends `-2`, `-3`, … if any file in `dir` already starts with `base`.
+fn unique_stem(dir: &Path, base: &str) -> String {
+    let taken = |stem: &str| {
+        fs::read_dir(dir).is_ok_and(|entries| {
+            entries
+                .flatten()
+                .any(|e| e.file_name().to_string_lossy().starts_with(stem))
+        })
+    };
+    if !taken(base) {
+        return base.to_string();
+    }
+    (2..)
+        .map(|n| format!("{base}-{n}"))
+        .find(|s| !taken(s))
+        .expect("unbounded range")
 }
 
 pub fn create_sink(spec: &OutputSpec) -> Result<Box<dyn PageSink>> {
@@ -97,6 +180,13 @@ pub(crate) fn write_atomically(path: &Path, bytes: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prefix_is_sanitised() {
+        assert_eq!(sanitize_prefix("Tax 2026/../x"), "Tax_2026____x");
+        assert_eq!(sanitize_prefix("  "), "scan");
+        assert_eq!(sanitize_prefix("ok-name_1"), "ok-name_1");
+    }
 
     #[test]
     fn page_names() {

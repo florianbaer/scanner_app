@@ -6,10 +6,9 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
-use scanner_app::discovery::{self, MdnsEpsonSource, SaneSource, Until};
-use scanner_app::output::{self, Format, OutputSpec};
-use scanner_app::sane::{fmt_num, Constraint, Sane, SaneScanner, ValueType};
-use scanner_app::scanner::{ColorMode, ScanError, ScanSettings, Scanner, Side, Source};
+use scanner_core::output::{self, Format, OutputSpec};
+use scanner_core::scanner::{Backend, ColorMode, FoundDevice, ScanSettings, Side, Source, Until};
+use scanner_sane::{fmt_num, Constraint, SaneBackend, ValueType};
 
 #[derive(Parser)]
 #[command(
@@ -114,26 +113,22 @@ fn parse_key_value(s: &str) -> Result<(String, String), String> {
 
 fn main() {
     if let Err(e) = run(Cli::parse()) {
-        if e.downcast_ref::<ScanError>() == Some(&ScanError::FeederEmpty) {
-            eprintln!("error: no documents in the feeder. Load photos or pages and try again.");
-        } else {
-            eprintln!("error: {e:#}");
-        }
+        eprintln!("error: {e:#}");
         std::process::exit(1);
     }
 }
 
 fn run(cli: Cli) -> Result<()> {
-    let sane = Sane::init()?;
+    let backend = SaneBackend::new()?;
     match cli.command {
-        Command::List(args) => list(&sane, &args),
-        Command::Options(args) => options(&sane, &args),
-        Command::Scan(args) => scan(&sane, args),
+        Command::List(args) => list(&backend, &args),
+        Command::Options(args) => options(&backend, &args),
+        Command::Scan(args) => scan(&backend, args),
     }
 }
 
-fn list(sane: &Sane, args: &DiscoverArgs) -> Result<()> {
-    let devices = discover(sane, args, Until::Timeout)?;
+fn list(backend: &SaneBackend, args: &DiscoverArgs) -> Result<()> {
+    let devices = discover(backend, args, Until::Timeout);
     if devices.is_empty() {
         println!("No scanners found.");
     }
@@ -143,25 +138,20 @@ fn list(sane: &Sane, args: &DiscoverArgs) -> Result<()> {
     Ok(())
 }
 
-fn discover(sane: &Sane, args: &DiscoverArgs, until: Until) -> Result<Vec<discovery::FoundDevice>> {
+fn discover(backend: &SaneBackend, args: &DiscoverArgs, until: Until) -> Vec<FoundDevice> {
     eprintln!("Searching for scanners…");
-    let sane_src = SaneSource(sane.clone());
-    let result = discovery::discover(
-        &[&MdnsEpsonSource, &sane_src],
-        Duration::from_secs(args.timeout),
-        until,
-    );
+    let result = backend.discover_detailed(Duration::from_secs(args.timeout), until);
     for (source, err) in &result.errors {
         eprintln!("warning: {source} discovery failed: {err:#}");
     }
-    Ok(result.devices)
+    result.devices
 }
 
-fn resolve_device(sane: &Sane, args: &DeviceArgs) -> Result<String> {
+fn resolve_device(backend: &SaneBackend, args: &DeviceArgs) -> Result<String> {
     if let Some(d) = &args.device {
         return Ok(d.clone());
     }
-    let devices = discover(sane, &args.discover, Until::First)?;
+    let devices = discover(backend, &args.discover, Until::First);
     let Some(first) = devices.into_iter().next() else {
         bail!("no scanner found. Is it switched on and on the same network? You can also pass --device epsonds:net:<ip>");
     };
@@ -169,9 +159,9 @@ fn resolve_device(sane: &Sane, args: &DeviceArgs) -> Result<String> {
     Ok(first.name)
 }
 
-fn options(sane: &Sane, args: &DeviceArgs) -> Result<()> {
-    let name = resolve_device(sane, args)?;
-    let scanner = SaneScanner::open(sane, &name)?;
+fn options(backend: &SaneBackend, args: &DeviceArgs) -> Result<()> {
+    let name = resolve_device(backend, args)?;
+    let scanner = backend.open_sane(&name)?;
     let dev = scanner.device();
     for opt in dev.options() {
         if opt.value_type == ValueType::Group || opt.name.is_empty() {
@@ -189,10 +179,7 @@ fn options(sane: &Sane, args: &DeviceArgs) -> Result<()> {
             }
             Constraint::List(v) => format!(
                 "  [{}]",
-                v.iter()
-                    .map(|x| x.to_string())
-                    .collect::<Vec<_>>()
-                    .join("|")
+                v.iter().map(|x| fmt_num(*x)).collect::<Vec<_>>().join("|")
             ),
             Constraint::Strings(v) => format!("  [{}]", v.join("|")),
         };
@@ -208,9 +195,11 @@ fn options(sane: &Sane, args: &DeviceArgs) -> Result<()> {
     Ok(())
 }
 
-fn scan(sane: &Sane, args: ScanArgs) -> Result<()> {
-    let name = resolve_device(sane, &args.device)?;
-    let mut scanner = SaneScanner::open(sane, &name).context("could not connect to the scanner")?;
+fn scan(backend: &SaneBackend, args: ScanArgs) -> Result<()> {
+    let name = resolve_device(backend, &args.device)?;
+    let mut scanner = backend
+        .open(&name)
+        .context("could not connect to the scanner")?;
 
     let settings = ScanSettings {
         mode: match args.mode {
@@ -228,20 +217,12 @@ fn scan(sane: &Sane, args: ScanArgs) -> Result<()> {
         deskew: !args.no_deskew,
         extra_options: args.extra,
     };
-    let spec = OutputSpec {
-        dir: args.out,
-        stem: format!(
-            "{}_{}",
-            args.name,
-            chrono::Local::now().format("%Y%m%d_%H%M%S")
-        ),
-        format: match args.format {
-            FormatArg::Pdf => Format::Pdf,
-            FormatArg::Jpeg => Format::Jpeg,
-            FormatArg::Png => Format::Png,
-        },
-        jpeg_quality: args.quality,
+    let format = match args.format {
+        FormatArg::Pdf => Format::Pdf,
+        FormatArg::Jpeg => Format::Jpeg,
+        FormatArg::Png => Format::Png,
     };
+    let spec = OutputSpec::timestamped(args.out, &args.name, format, args.quality);
 
     let mut sink = output::create_sink(&spec)?;
     eprintln!("Scanning at {} dpi…", settings.dpi);

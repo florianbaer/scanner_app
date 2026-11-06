@@ -3,9 +3,11 @@
 
 use anyhow::{Context, Result};
 
-use super::{Device, Sane};
-use crate::raster;
-use crate::scanner::{ColorMode, Page, ScanError, ScanSettings, Scanner, Side, Source};
+use crate::{Constraint, Device, Sane};
+use scanner_core::raster;
+use scanner_core::scanner::{
+    Capabilities, ColorMode, Page, ScanError, ScanSettings, Scanner, Side, Source,
+};
 
 pub struct SaneScanner {
     device: Device,
@@ -116,7 +118,36 @@ impl SaneScanner {
     }
 }
 
+/// Resolutions offered when a backend only reports a range.
+const COMMON_DPI: [u32; 8] = [75, 100, 150, 200, 300, 400, 600, 1200];
+
 impl Scanner for SaneScanner {
+    fn capabilities(&self) -> Capabilities {
+        let d = &self.device;
+        let constraint = |name: &str| d.find(name).map(|o| o.constraint);
+        let resolutions = match constraint("resolution") {
+            Some(Constraint::List(v)) => v.iter().map(|x| x.round() as u32).collect(),
+            Some(Constraint::Range { min, max, .. }) => COMMON_DPI
+                .into_iter()
+                .filter(|&r| (min..=max).contains(&(r as f64)))
+                .collect(),
+            _ => Vec::new(),
+        };
+        let modes = match constraint("mode") {
+            Some(Constraint::Strings(v)) => v.iter().filter_map(|m| m.parse().ok()).collect(),
+            _ => Vec::new(),
+        };
+        let duplex = matches!(constraint("source"),
+            Some(Constraint::Strings(v)) if v.iter().any(|s| s.to_ascii_lowercase().contains("duplex")));
+        Capabilities {
+            resolutions,
+            modes,
+            duplex,
+            auto_crop: d.find("adf-crp").is_some(),
+            deskew: d.find("adf-skew").is_some(),
+        }
+    }
+
     fn scan(
         &mut self,
         settings: &ScanSettings,

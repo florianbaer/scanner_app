@@ -1,0 +1,15 @@
+[package]
+name = "scanner-cli"
+description = "Command-line front-end for scanning"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "scanner"
+path = "src/main.rs"
+
+[dependencies]
+scanner-core.workspace = true
+scanner-sane.workspace = true
+anyhow.workspace = true
+clap = { version = "4", features = ["derive", "env"] }

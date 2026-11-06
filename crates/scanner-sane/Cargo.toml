@@ -1,0 +1,14 @@
+[package]
+name = "scanner-sane"
+description = "SANE backend for scanner-core (FFI to libsane, Epson mDNS discovery)"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+scanner-core.workspace = true
+anyhow.workspace = true
+# Bonjour fallback: SANE's own network autodiscovery misses the FF-680W on some networks.
+mdns-sd = "0.21"
+
+[build-dependencies]
+pkg-config = "0.3"
