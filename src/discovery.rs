@@ -10,7 +10,7 @@ use crate::sane::Sane;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FoundDevice {
-    /// Device name to open with the backend, e.g. `epsonds:net:192.0.2.10`.
+    /// Device name to open with the backend, e.g. `epsonds:net:<ip>`.
     pub name: String,
     /// Human-readable label, e.g. `EPSON FF-680W`.
     pub label: String,

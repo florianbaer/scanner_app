@@ -40,7 +40,7 @@ struct DiscoverArgs {
 
 #[derive(Args)]
 struct DeviceArgs {
-    /// SANE device name, e.g. epsonds:net:192.0.2.10. Discovered automatically if omitted.
+    /// SANE device name, e.g. epsonds:net:<ip>. Discovered automatically if omitted.
     #[arg(short, long, env = "SCANNER_DEVICE")]
     device: Option<String>,
 
